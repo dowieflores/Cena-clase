@@ -127,6 +127,7 @@ function token(){
   return t;
 }
 var TOKEN=token();
+var ACC=LS.get("cena-acceso")||"";
 
 function rpc(fn,args){
   return fetch(SUPABASE_URL+"/rest/v1/rpc/"+fn,{method:"POST",headers:{"apikey":SUPABASE_KEY,"Content-Type":"application/json"},body:JSON.stringify(args||{})})
@@ -154,7 +155,14 @@ function counts(){var ok=new Set(validDays()),m={};st.respuestas.forEach(functio
 function mine(){return st.mia?st.respuestas.find(function(r){return r.id===st.mia}):null}
 
 function load(){
-  return rpc("encuesta_estado",{p_token:TOKEN}).then(function(d){
+  var pub=function(){return rpc("encuesta_estado",{p_token:TOKEN,p_acceso:ACC})};
+  var req=(ui.pw&&ui.adm)?rpc("admin_estado",{p_clave:ui.pw,p_token:TOKEN}).then(function(r){
+    if(r.ok)return r.estado;
+    ui.pw=null;ui.adm=null;SS.set("cena-admin",null);ui.admMsg={t:r.error,err:true};return pub();
+  }):pub();
+  return req.then(function(d){
+    if(d&&d.acceso===false){st=null;renderGate();return}
+    ui.gateTried=false;
     st=d;
     var m=mine();
     if(m&&!ui.prefilled){ui.nombre=m.nombre;ui.apellido=m.apellido;ui.sel=new Set(m.dias);ui.prefilled=true}
@@ -163,6 +171,15 @@ function load(){
   }).catch(function(){
     if(!st)document.getElementById("app").innerHTML='<div class="note err">No se pudo cargar la encuesta. Comprueba tu conexión y recarga la página.</div>';
   });
+}
+
+function renderGate(){
+  var app=document.getElementById("app");
+  app.innerHTML='<header><h1>Encuesta privada</h1><p class="sub">Escribe la contraseña que se compartió en el grupo para entrar.</p></header>'+
+    (ui.gateTried?'<div class="note err" role="status">Contraseña incorrecta. Revísala (distingue mayúsculas y minúsculas).</div>':"")+
+    '<section class="panel box"><label class="fld" for="g-pw">Contraseña<input type="password" id="g-pw" autocomplete="current-password"></label><div><button class="btn" id="g-go">Entrar</button></div></section>';
+  var i=document.getElementById("g-pw"),go=function(){if(!i.value)return;ACC=i.value;LS.set("cena-acceso",ACC);ui.gateTried=true;load()};
+  document.getElementById("g-go").onclick=go;i.onkeydown=function(e){if(e.key==="Enter")go()};i.focus();
 }
 
 /* ---------- calendario ---------- */
@@ -188,7 +205,7 @@ function weCls(k){var w=P(k).getUTCDay();return(w===5||w===6||w===0)?" we":""}
 /* ---------- render ---------- */
 function render(){
   if(!st)return;
-  var c=cfg(),total=st.respuestas.length,h="";
+  var c=cfg(),total=st.total,h="";
   h+='<header><h1>'+esc(c.titulo)+'</h1><p class="sub">'+(total?total+(total===1?" persona ha":" personas han")+" respondido.":"Aún no ha respondido nadie. ¡Sé el primero!")+
      (c.fecha_limite&&!c.cerrada?" Puedes responder hasta el "+esc(fmtTs(c.fecha_limite))+".":"")+"</p></header>";
   if(c.fecha_final)h+='<div class="final-banner"><div class="lbl">Fecha elegida</div><div class="big">'+cap(nice(c.fecha_final))+"</div>"+(c.mensaje?'<p style="margin:6px 0 0">'+esc(c.mensaje)+"</p>":"")+"</div>";
@@ -222,9 +239,13 @@ function canSave(){return!ui.busy&&ui.nombre.trim()&&ui.apellido.trim()&&ui.sel.
 
 function resHTML(){
   var c=cfg(),cmap=counts(),people=st.respuestas,total=people.length;
+  if(!st.visible){
+    return'<div class="empty"><b>Los resultados están ocultos</b> hasta que termine la votación'+(c.fecha_limite?" ("+esc(fmtTs(c.fecha_limite))+")":"")+'.<br>Así cada uno vota con libertad, sin ver lo que eligen los demás.<br><br>Llevamos <b>'+st.total+"</b> "+(st.total===1?"respuesta":"respuestas")+".</div>";
+  }
+  var secret=c.resultados_ocultos&&!c.cerrada;
   if(!total)return'<div class="empty">Cuando la gente responda, aquí verás qué días puede ir más gente.<br>Empieza tú en <b>Mis días</b>.</div>';
   var ranked=Object.keys(cmap).sort(function(a,b){return cmap[b].length-cmap[a].length||(a<b?-1:1)}),max=ranked.length?cmap[ranked[0]].length:0;
-  var h='<section class="panel"><h2>Mejores días</h2><p class="hint">Toca un día para ver quién puede y quién no.</p><ol class="top">';
+  var h='<section class="panel"><h2>Mejores días</h2>'+(secret?'<div class="note">Solo tú ves estos resultados. Los votantes los verán cuando se cierre la encuesta.</div>':"")+'<p class="hint">Toca un día para ver quién puede y quién no.</p><ol class="top">';
   ranked.slice(0,6).forEach(function(k,i){
     var list=cmap[k],open=ui.focus===k;
     h+='<li class="'+(i===0?"first":"")+'" data-h="'+k+'" tabindex="0" aria-expanded="'+open+'"><span class="when">'+cap(nice(k))+'</span><span class="n">'+list.length+"/"+total+'</span><span class="meter"><i style="width:'+Math.round(list.length/total*100)+'%"></i></span>';
@@ -232,7 +253,7 @@ function resHTML(){
     h+="</li>";
   });
   h+="</ol>";
-  h+='<a class="btn wa" id="wa" href="'+esc(waLink())+'" target="_blank" rel="noopener">Compartir resultado en WhatsApp</a>';
+  if(!secret)h+='<a class="btn wa" id="wa" href="'+esc(waLink())+'" target="_blank" rel="noopener">Compartir resultado en WhatsApp</a>';
   h+='<h2>Calendario</h2><div class="legend"><i style="background:var(--surface)"></i>nadie <i style="background:color-mix(in srgb,var(--accent) 85%,var(--surface))"></i>'+max+" "+(max===1?"persona":"personas")+" · el número es cuánta gente puede</div>";
   if(ui.focus&&ranked.slice(0,6).indexOf(ui.focus)<0)h+='<div class="detail"><strong>'+cap(nice(ui.focus))+"</strong>"+whoHTML(ui.focus,cmap)+"</div>";
   var bl=new Set(c.dias_bloqueados||[]);
@@ -270,7 +291,8 @@ function adminHTML(){
      '<label class="fld" for="a-mensaje">Mensaje para todos (opcional: sitio, hora, precio…)<textarea id="a-mensaje" maxlength="400">'+esc(a.mensaje||"")+"</textarea></label>"+
      '<div class="row"><label class="fld" for="a-ini">Primer día<input type="date" id="a-ini" value="'+a.fecha_inicio+'"></label><label class="fld" for="a-fin">Último día<input type="date" id="a-fin" value="'+a.fecha_fin+'"></label></div>'+
      '<label class="fld" for="a-lim">Fecha límite para responder (opcional)<input type="datetime-local" id="a-lim" value="'+toLocalInput(a.fecha_limite)+'"></label>'+
-     '<label class="chk" for="a-cerrada"><input type="checkbox" id="a-cerrada"'+(a.cerrada?" checked":"")+"> Cerrar la encuesta ya (nadie puede responder)</label></div>";
+     '<label class="chk" for="a-cerrada"><input type="checkbox" id="a-cerrada"'+(a.cerrada?" checked":"")+"> Cerrar la encuesta ya (nadie puede responder)</label>"+
+     '<label class="chk" for="a-ocultos"><input type="checkbox" id="a-ocultos"'+(a.ocultos?" checked":"")+"> Ocultar los resultados a los votantes hasta que se cierre la encuesta</label></div>";
   h+='<div class="box adm"><h2>Días disponibles</h2><p class="hint">1. Elige qué días de la semana se pueden votar (puedes marcar varios). Sin ninguno marcado, se pueden votar todos.</p><div class="quick">';
   [[1,"lunes"],[2,"martes"],[3,"miércoles"],[4,"jueves"],[5,"viernes"],[6,"sábados"],[0,"domingos"]].forEach(function(w){h+='<button type="button" class="chip wk" data-w="'+w[0]+'" aria-pressed="'+a.solo.has(w[0])+'">'+w[1]+"</button>"});
   h+='</div><p class="hint">2. Toca en el calendario los días sueltos que quieras quitar (festivos…) o recuperar. Los tachados no se pueden votar.</p>';
@@ -288,23 +310,25 @@ function adminHTML(){
   else h+='<p class="hint">Borra respuestas falsas o duplicadas. Pulsa dos veces para confirmar.</p><ul class="list">'+st.respuestas.map(function(r){
     return'<li><span class="nm">'+esc(full(r))+"<small>"+r.dias.length+(r.dias.length===1?" día":" días")+'</small></span><button class="btn danger sm'+(ui.armed===r.id?" armed":"")+'" data-del="'+r.id+'">'+(ui.armed===r.id?"¿Seguro? Pulsa otra vez":"Borrar")+"</button></li>"}).join("")+"</ul>";
   h+="</div>";
-  h+='<div class="box"><h2>Cambiar contraseña</h2><label class="fld" for="a-new">Nueva contraseña (mínimo 8 caracteres)<input type="password" id="a-new" autocomplete="new-password"></label><div><button class="btn ghost" id="a-pwsave">Cambiar contraseña</button></div></div>';
+  h+='<div class="box"><h2>Contraseña de acceso a la web</h2><p class="hint">La que necesitan los compañeros para entrar. Si la cambias, tendrás que dar la nueva al grupo.</p><label class="fld" for="a-acc">Nueva contraseña de acceso (mínimo 6 caracteres)<input type="text" id="a-acc" autocomplete="off"></label><div class="row"><button class="btn ghost" id="a-accsave">Cambiar acceso</button><button class="btn danger sm'+(ui.armedPub?" armed":"")+'" id="a-accoff">'+(ui.armedPub?"¿Seguro? Cualquiera con el enlace podrá entrar":"Quitar contraseña (web abierta)")+"</button></div></div>";
+  h+='<div class="box"><h2>Cambiar contraseña de organizador</h2><label class="fld" for="a-new">Nueva contraseña (mínimo 8 caracteres)<input type="password" id="a-new" autocomplete="new-password"></label><div><button class="btn ghost" id="a-pwsave">Cambiar contraseña</button></div></div>';
   h+='<div class="row"><button class="btn ghost" id="a-logout">Salir del modo organizador</button></div>';
   return h+"</section>";
 }
 function inviteLink(){
   var c=cfg(),t="*"+c.titulo+"*\n\nMarca los días que puedes venir y así elegimos la fecha en la que más gente pueda:\n"+baseUrl();
+  if(ACC)t+="\nContraseña: "+ACC;
   if(c.fecha_limite)t+="\n\nPlazo: hasta el "+fmtTs(c.fecha_limite)+".";
   return"https://wa.me/?text="+encodeURIComponent(t);
 }
-function admFromCfg(){var c=cfg();ui.adm={titulo:c.titulo,mensaje:c.mensaje,fecha_inicio:c.fecha_inicio,fecha_fin:c.fecha_fin,fecha_limite:c.fecha_limite,cerrada:c.cerrada_manual,fecha_final:c.fecha_final,bloq:new Set(c.dias_bloqueados||[])};ui.adm.solo=deriveSolo()}
+function admFromCfg(){var c=cfg();ui.adm={titulo:c.titulo,mensaje:c.mensaje,fecha_inicio:c.fecha_inicio,fecha_fin:c.fecha_fin,fecha_limite:c.fecha_limite,cerrada:c.cerrada_manual,fecha_final:c.fecha_final,ocultos:c.resultados_ocultos!==false,bloq:new Set(c.dias_bloqueados||[])};ui.adm.solo=deriveSolo()}
 function deriveSolo(){var a=ui.adm,seen={},free={};range(a.fecha_inicio,a.fecha_fin).forEach(function(k){var w=P(k).getUTCDay();seen[w]=1;if(!a.bloq.has(k))free[w]=1});
   var ws=Object.keys(seen).map(Number),fw=Object.keys(free).map(Number);return fw.length<ws.length?new Set(fw):new Set()}
 function applySolo(){var a=ui.adm;a.bloq=new Set(a.solo.size?range(a.fecha_inicio,a.fecha_fin).filter(function(k){return!a.solo.has(P(k).getUTCDay())}):[])}
 function readAdm(){
   var a=ui.adm,g=function(id){return document.getElementById(id)};if(!g("a-titulo"))return;
   a.titulo=g("a-titulo").value;a.mensaje=g("a-mensaje").value;a.fecha_inicio=g("a-ini").value;a.fecha_fin=g("a-fin").value;
-  var lim=g("a-lim").value;a.fecha_limite=lim?new Date(lim).toISOString():null;a.cerrada=g("a-cerrada").checked;a.fecha_final=g("a-final").value||null;
+  var lim=g("a-lim").value;a.fecha_limite=lim?new Date(lim).toISOString():null;a.cerrada=g("a-cerrada").checked;a.ocultos=g("a-ocultos").checked;a.fecha_final=g("a-final").value||null;
 }
 
 /* ---------- eventos ---------- */
@@ -326,8 +350,10 @@ function bind(){
   ["a-ini","a-fin"].forEach(function(id){var el=document.getElementById(id);if(el)el.onchange=function(){readAdm();if(ui.adm.solo.size&&ui.adm.fecha_inicio&&ui.adm.fecha_fin&&ui.adm.fecha_fin>=ui.adm.fecha_inicio)applySolo();render()}});
   var as=document.getElementById("a-save");if(as)as.onclick=adminSave;
   document.querySelectorAll("[data-del]").forEach(function(b){b.onclick=function(){readAdm();adminDel(b.dataset.del)}});
+  var acs=document.getElementById("a-accsave");if(acs)acs.onclick=function(){readAdm();changeAcc(document.getElementById("a-acc").value)};
+  var aco=document.getElementById("a-accoff");if(aco)aco.onclick=function(){readAdm();if(!ui.armedPub){ui.armedPub=true;render();return}ui.armedPub=false;changeAcc("")};
   var pc=document.getElementById("a-pwsave");if(pc)pc.onclick=changePw;
-  var lo=document.getElementById("a-logout");if(lo)lo.onclick=function(){ui.pw=null;ui.adm=null;SS.set("cena-admin",null);ui.admMsg=null;setTab("form")};
+  var lo=document.getElementById("a-logout");if(lo)lo.onclick=function(){ui.pw=null;ui.adm=null;SS.set("cena-admin",null);ui.admMsg=null;ui.tab="form";history.replaceState(null,"",location.pathname+location.search);load()};
 }
 function upd(){var c=document.getElementById("count"),s=document.getElementById("save");if(c)c.textContent=countTxt();if(s)s.disabled=!canSave();ui.armedMine=false}
 
@@ -335,7 +361,7 @@ function save(){
   if(!canSave())return;
   ui.busy=true;render();
   var dias=Array.from(ui.sel).filter(function(k){return validDays().indexOf(k)>=0}).sort();
-  rpc("encuesta_responder",{p_token:TOKEN,p_nombre:ui.nombre,p_apellido:ui.apellido,p_dias:dias}).then(function(r){
+  rpc("encuesta_responder",{p_token:TOKEN,p_nombre:ui.nombre,p_apellido:ui.apellido,p_dias:dias,p_acceso:ACC}).then(function(r){
     ui.busy=false;
     if(r.ok){ui.msg={t:"¡Guardado! Ya cuentas en los resultados. Puedes volver a cambiar tus días cuando quieras."};ui.tab="res"}
     else ui.msg={t:r.error,err:true};
@@ -344,7 +370,7 @@ function save(){
 }
 function delMine(){
   if(!ui.armedMine){ui.armedMine=true;render();return}
-  rpc("encuesta_borrar_mia",{p_token:TOKEN}).then(function(r){
+  rpc("encuesta_borrar_mia",{p_token:TOKEN,p_acceso:ACC}).then(function(r){
     ui.armedMine=false;
     if(r.ok){ui.msg={t:"Tu respuesta se ha borrado."};ui.sel=new Set();ui.nombre="";ui.apellido="";ui.prefilled=true}
     else ui.msg={t:r.error,err:true};
@@ -354,8 +380,8 @@ function delMine(){
 function login(pw){
   if(!pw)return;
   rpc("admin_entrar",{p_clave:pw}).then(function(r){
-    if(r.ok){ui.pw=pw;SS.set("cena-admin",pw);ui.admMsg=null;admFromCfg()}else{ui.admMsg={t:r.error,err:true}}
-    render();
+    if(r.ok){ui.pw=pw;SS.set("cena-admin",pw);ui.admMsg=null;admFromCfg();return load()}
+    ui.admMsg={t:r.error,err:true};render();
   }).catch(function(){ui.admMsg={t:"No se pudo conectar. Prueba otra vez.",err:true};render()});
 }
 function adminSave(){
@@ -364,7 +390,7 @@ function adminSave(){
   if(!a.fecha_inicio||!a.fecha_fin||a.fecha_fin<a.fecha_inicio){ui.admMsg={t:"El último día tiene que ser igual o posterior al primero.",err:true};render();return}
   ui.busy=true;render();
   var bloq=Array.from(a.bloq).filter(function(k){return k>=a.fecha_inicio&&k<=a.fecha_fin}).sort();
-  rpc("admin_guardar",{p_clave:ui.pw,p_config:{titulo:a.titulo,mensaje:a.mensaje,fecha_inicio:a.fecha_inicio,fecha_fin:a.fecha_fin,dias_bloqueados:bloq,fecha_limite:a.fecha_limite||"",cerrada:a.cerrada,fecha_final:a.fecha_final||""}}).then(function(r){
+  rpc("admin_guardar",{p_clave:ui.pw,p_config:{titulo:a.titulo,mensaje:a.mensaje,fecha_inicio:a.fecha_inicio,fecha_fin:a.fecha_fin,dias_bloqueados:bloq,fecha_limite:a.fecha_limite||"",cerrada:a.cerrada,resultados_ocultos:a.ocultos,fecha_final:a.fecha_final||""}}).then(function(r){
     ui.busy=false;
     return load().then(function(){
       if(r.ok){admFromCfg();ui.admMsg={t:"Cambios guardados. Ya los ve todo el mundo."}}
@@ -380,6 +406,13 @@ function adminDel(id){
     ui.admMsg=r.ok?{t:"Respuesta borrada."}:{t:r.error,err:true};
     return load();
   }).catch(function(){ui.admMsg={t:"No se pudo borrar. Prueba otra vez.",err:true};render()});
+}
+function changeAcc(nv){
+  if(nv&&nv.length<6){ui.admMsg={t:"La contraseña de acceso debe tener al menos 6 caracteres.",err:true};render();return}
+  rpc("admin_cambiar_acceso",{p_clave:ui.pw,p_nueva:nv}).then(function(r){
+    if(r.ok){ACC=nv;LS.set("cena-acceso",nv);ui.admMsg={t:nv?"Contraseña de acceso cambiada. Compártela con el grupo.":"La web ya no pide contraseña."}}else ui.admMsg={t:r.error,err:true};
+    render();window.scrollTo(0,0);
+  }).catch(function(){ui.admMsg={t:"No se pudo cambiar. Prueba otra vez.",err:true};render()});
 }
 function changePw(){
   var nv=document.getElementById("a-new").value;readAdm();
