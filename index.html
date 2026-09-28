@@ -59,6 +59,7 @@ input:disabled{opacity:.7}
 .day small{font-size:.65rem;line-height:1}
 .day.sel{outline:2px solid var(--ink);outline-offset:-2px}
 .day.final{box-shadow:inset 0 0 0 3px var(--mark)}
+.chip[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
 .adm .day[aria-pressed="true"]{background:var(--warn);border-color:var(--warn);color:#fff;text-decoration:line-through}
 .bar{position:sticky;bottom:0;background:var(--bg);padding-block:12px calc(12px + env(safe-area-inset-bottom,0px));border-top:1px solid var(--line);display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}
 .count{font-size:.9rem;color:var(--muted)}
@@ -270,7 +271,9 @@ function adminHTML(){
      '<div class="row"><label class="fld" for="a-ini">Primer día<input type="date" id="a-ini" value="'+a.fecha_inicio+'"></label><label class="fld" for="a-fin">Último día<input type="date" id="a-fin" value="'+a.fecha_fin+'"></label></div>'+
      '<label class="fld" for="a-lim">Fecha límite para responder (opcional)<input type="datetime-local" id="a-lim" value="'+toLocalInput(a.fecha_limite)+'"></label>'+
      '<label class="chk" for="a-cerrada"><input type="checkbox" id="a-cerrada"'+(a.cerrada?" checked":"")+"> Cerrar la encuesta ya (nadie puede responder)</label></div>";
-  h+='<div class="box adm"><h2>Días no disponibles</h2><p class="hint">Toca los días que quieras quitar de la encuesta (festivos, días imposibles…). Aparecerán tachados.</p>';
+  h+='<div class="box adm"><h2>Días disponibles</h2><p class="hint">1. Elige qué días de la semana se pueden votar (puedes marcar varios). Sin ninguno marcado, se pueden votar todos.</p><div class="quick">';
+  [[1,"lunes"],[2,"martes"],[3,"miércoles"],[4,"jueves"],[5,"viernes"],[6,"sábados"],[0,"domingos"]].forEach(function(w){h+='<button type="button" class="chip wk" data-w="'+w[0]+'" aria-pressed="'+a.solo.has(w[0])+'">'+w[1]+"</button>"});
+  h+='</div><p class="hint">2. Toca en el calendario los días sueltos que quieras quitar (festivos…) o recuperar. Los tachados no se pueden votar.</p>';
   var ok=a.fecha_inicio&&a.fecha_fin&&a.fecha_fin>=a.fecha_inicio&&range(a.fecha_inicio,a.fecha_fin).length<=367;
   h+=ok?monthsHTML(a.fecha_inicio,a.fecha_fin,function(k,d){return'<button type="button" class="day'+weCls(k)+'" data-b="'+k+'" aria-pressed="'+a.bloq.has(k)+'" aria-label="'+nice(k)+'">'+d+"</button>"}):'<p class="note err">Revisa el primer y el último día.</p>';
   h+="</div>";
@@ -294,7 +297,10 @@ function inviteLink(){
   if(c.fecha_limite)t+="\n\nPlazo: hasta el "+fmtTs(c.fecha_limite)+".";
   return"https://wa.me/?text="+encodeURIComponent(t);
 }
-function admFromCfg(){var c=cfg();ui.adm={titulo:c.titulo,mensaje:c.mensaje,fecha_inicio:c.fecha_inicio,fecha_fin:c.fecha_fin,fecha_limite:c.fecha_limite,cerrada:c.cerrada_manual,fecha_final:c.fecha_final,bloq:new Set(c.dias_bloqueados||[])}}
+function admFromCfg(){var c=cfg();ui.adm={titulo:c.titulo,mensaje:c.mensaje,fecha_inicio:c.fecha_inicio,fecha_fin:c.fecha_fin,fecha_limite:c.fecha_limite,cerrada:c.cerrada_manual,fecha_final:c.fecha_final,bloq:new Set(c.dias_bloqueados||[])};ui.adm.solo=deriveSolo()}
+function deriveSolo(){var a=ui.adm,seen={},free={};range(a.fecha_inicio,a.fecha_fin).forEach(function(k){var w=P(k).getUTCDay();seen[w]=1;if(!a.bloq.has(k))free[w]=1});
+  var ws=Object.keys(seen).map(Number),fw=Object.keys(free).map(Number);return fw.length<ws.length?new Set(fw):new Set()}
+function applySolo(){var a=ui.adm;a.bloq=new Set(a.solo.size?range(a.fecha_inicio,a.fecha_fin).filter(function(k){return!a.solo.has(P(k).getUTCDay())}):[])}
 function readAdm(){
   var a=ui.adm,g=function(id){return document.getElementById(id)};if(!g("a-titulo"))return;
   a.titulo=g("a-titulo").value;a.mensaje=g("a-mensaje").value;a.fecha_inicio=g("a-ini").value;a.fecha_fin=g("a-fin").value;
@@ -315,8 +321,9 @@ function bind(){
   var dm=document.getElementById("del-mine");if(dm)dm.onclick=delMine;
   document.querySelectorAll("[data-h]").forEach(function(b){var f=function(){ui.focus=ui.focus===b.dataset.h?null:b.dataset.h;render()};b.onclick=f;b.onkeydown=function(e){if(e.key==="Enter"||e.key===" "){e.preventDefault();f()}}});
   var lg=document.getElementById("a-login");if(lg){var pw=document.getElementById("a-pw");lg.onclick=function(){login(pw.value)};pw.onkeydown=function(e){if(e.key==="Enter")login(pw.value)};pw.focus()}
+  document.querySelectorAll("[data-w]").forEach(function(b){b.onclick=function(){readAdm();var w=+b.dataset.w;ui.adm.solo.has(w)?ui.adm.solo.delete(w):ui.adm.solo.add(w);applySolo();render()}});
   document.querySelectorAll("[data-b]").forEach(function(b){b.onclick=function(){readAdm();var k=b.dataset.b;ui.adm.bloq.has(k)?ui.adm.bloq.delete(k):ui.adm.bloq.add(k);b.setAttribute("aria-pressed",ui.adm.bloq.has(k))}});
-  ["a-ini","a-fin"].forEach(function(id){var el=document.getElementById(id);if(el)el.onchange=function(){readAdm();render()}});
+  ["a-ini","a-fin"].forEach(function(id){var el=document.getElementById(id);if(el)el.onchange=function(){readAdm();if(ui.adm.solo.size&&ui.adm.fecha_inicio&&ui.adm.fecha_fin&&ui.adm.fecha_fin>=ui.adm.fecha_inicio)applySolo();render()}});
   var as=document.getElementById("a-save");if(as)as.onclick=adminSave;
   document.querySelectorAll("[data-del]").forEach(function(b){b.onclick=function(){readAdm();adminDel(b.dataset.del)}});
   var pc=document.getElementById("a-pwsave");if(pc)pc.onclick=changePw;
