@@ -78,6 +78,9 @@ input:disabled{opacity:.7}
 .final-banner .big{font-family:var(--display);font-size:1.6rem;font-weight:800;line-height:1.15}
 .top{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px}
 .top li{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:grid;grid-template-columns:1fr auto;gap:4px 12px;cursor:pointer}
+.sub-tabs{flex-wrap:wrap}
+.sub-tabs button{flex:1 1 auto;font-size:.88rem;padding:8px 6px}
+.top li.more-hint{background:none;border:0;padding:0;cursor:default;display:block}
 .top li.first{border-color:var(--accent);border-width:2px}
 .top li[aria-expanded="true"]{border-color:var(--ink)}
 .top .when{font-weight:700}
@@ -245,17 +248,23 @@ function resHTML(){
   var secret=c.resultados_ocultos&&!c.cerrada;
   if(!total)return'<div class="empty">Cuando la gente responda, aquí verás qué días puede ir más gente.<br>Empieza tú en <b>Mis días</b>.</div>';
   var ranked=Object.keys(cmap).sort(function(a,b){return cmap[b].length-cmap[a].length||(a<b?-1:1)}),max=ranked.length?cmap[ranked[0]].length:0;
-  var h='<section class="panel"><h2>Mejores días</h2>'+(secret?'<div class="note">Solo tú ves estos resultados. Los votantes los verán cuando se cierre la encuesta.</div>':"")+'<p class="hint">Toca un día para ver quién puede y quién no.</p><ol class="top">';
-  ranked.slice(0,6).forEach(function(k,i){
+  var h='<section class="panel"><h2>Días más votados</h2>'+(secret?'<div class="note">Solo tú ves estos resultados. Los votantes los verán cuando se cierre la encuesta.</div>':"")+'<p class="hint">Toca un día para ver quién puede y quién no.</p>';
+  var months=[];ranked.slice().sort().forEach(function(k){var m=k.slice(0,7);if(months.indexOf(m)<0)months.push(m)});
+  var rt=ui.rtab||"top";if(rt!=="top"&&months.indexOf(rt)<0)rt="top";
+  h+='<div class="tabs sub-tabs" role="tablist"><button role="tab" data-rt="top" aria-selected="'+(rt==="top")+'">Top 5</button>'+months.map(function(m){return'<button role="tab" data-rt="'+m+'" aria-selected="'+(rt===m)+'">'+cap(MES[+m.slice(5,7)-1])+"</button>"}).join("")+"</div>";
+  var shown=rt==="top"?ranked.slice(0,5):ranked.filter(function(k){return k.slice(0,7)===rt}).sort();
+  h+='<ol class="top">';
+  shown.forEach(function(k){
     var list=cmap[k],open=ui.focus===k;
-    h+='<li class="'+(i===0?"first":"")+'" data-h="'+k+'" tabindex="0" aria-expanded="'+open+'"><span class="when">'+cap(nice(k))+'</span><span class="n">'+list.length+"/"+total+'</span><span class="meter"><i style="width:'+Math.round(list.length/total*100)+'%"></i></span>';
+    h+='<li class="'+(k===ranked[0]?"first":"")+'" data-h="'+k+'" tabindex="0" aria-expanded="'+open+'"><span class="when">'+cap(nice(k))+'</span><span class="n">'+list.length+"/"+total+'</span><span class="meter"><i style="width:'+Math.round(list.length/total*100)+'%"></i></span>';
     if(open)h+='<span class="who">'+whoHTML(k,cmap)+"</span>";
     h+="</li>";
   });
+  if(rt==="top"&&ranked.length>5)h+='<li class="more-hint"><p class="hint">Hay '+(ranked.length-5)+' días más con votos: míralos en las pestañas de cada mes.</p></li>';
   h+="</ol>";
   if(!secret)h+='<a class="btn wa" id="wa" href="'+esc(waLink())+'" target="_blank" rel="noopener">Compartir resultado en WhatsApp</a>';
   h+='<h2>Calendario</h2><div class="legend"><i style="background:var(--surface)"></i>nadie <i style="background:color-mix(in srgb,var(--accent) 85%,var(--surface))"></i>'+max+" "+(max===1?"persona":"personas")+" · el número es cuánta gente puede</div>";
-  if(ui.focus&&ranked.slice(0,6).indexOf(ui.focus)<0)h+='<div class="detail"><strong>'+cap(nice(ui.focus))+"</strong>"+whoHTML(ui.focus,cmap)+"</div>";
+  if(ui.focus&&shown.indexOf(ui.focus)<0)h+='<div class="detail"><strong>'+cap(nice(ui.focus))+"</strong>"+whoHTML(ui.focus,cmap)+"</div>";
   var bl=new Set(c.dias_bloqueados||[]);
   h+=monthsHTML(c.fecha_inicio,c.fecha_fin,function(k,d){
     if(bl.has(k))return'<span class="day off">'+d+"</span>";
@@ -343,6 +352,7 @@ function bind(){
     render()}});
   var s=document.getElementById("save");if(s)s.onclick=save;
   var dm=document.getElementById("del-mine");if(dm)dm.onclick=delMine;
+  document.querySelectorAll("[data-rt]").forEach(function(b){b.onclick=function(){ui.rtab=b.dataset.rt;render()}});
   document.querySelectorAll("[data-h]").forEach(function(b){var f=function(){ui.focus=ui.focus===b.dataset.h?null:b.dataset.h;render()};b.onclick=f;b.onkeydown=function(e){if(e.key==="Enter"||e.key===" "){e.preventDefault();f()}}});
   var lg=document.getElementById("a-login");if(lg){var pw=document.getElementById("a-pw");lg.onclick=function(){login(pw.value)};pw.onkeydown=function(e){if(e.key==="Enter")login(pw.value)};pw.focus()}
   document.querySelectorAll("[data-w]").forEach(function(b){b.onclick=function(){readAdm();var w=+b.dataset.w;ui.adm.solo.has(w)?ui.adm.solo.delete(w):ui.adm.solo.add(w);applySolo();render()}});
